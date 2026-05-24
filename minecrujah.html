@@ -832,6 +832,7 @@
                 <div><span class="key">Clique Direito</span> Construir / Usar</div>
                 <div><span class="key">E</span> Inventario</div>
                 <div><span class="key">N</span> Alternar dia/noite</div>
+                <div><span class="key">M</span> Ligar/desligar som</div>
                 <div><span class="key">1-5</span> Blocos</div>
                 <div><span class="key">6-0</span> Ferramentas</div>
                 <div><span class="key">P</span> Salvar jogo</div>
@@ -1626,6 +1627,14 @@
         let chestMeat = 0;
         let statusMessageTimer = 0;
         let lastDamageTime = 0;
+        let audioContext = null;
+        let audioMasterGain = null;
+        let audioReady = false;
+        let audioMuted = false;
+        let footstepTimer = 0;
+        let fluidAmbientTimer = 0;
+        let hostileSoundTimer = 0;
+        const ambientAudioNodes = {};
         const TOOL_DURABILITY_MAX = { pickaxe: 120, axe: 120, shovel: 80, sword: 100, barbiekill: 350 };
         const toolDurability = { pickaxe: 120, axe: 120, shovel: 80, sword: 100, barbiekill: 350 };
         const DAY_NIGHT_DURATION = 2400; // 20min dia + 20min noite = 40min ciclo total
@@ -1633,6 +1642,216 @@
         const SUN_SHADOW_MIN_DAYLIGHT = 0.24;
         const TORCH_LIGHT_COLOR = 0xffb56a;
         const CAMPFIRE_LIGHT_COLOR = 0xff9a45;
+
+        // --- ÁUDIO ---
+        function ensureAudio() {
+            if (audioReady) {
+                if (audioContext && audioContext.state === 'suspended') audioContext.resume();
+                return true;
+            }
+
+            const AudioCtor = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtor) return false;
+            audioContext = new AudioCtor();
+            audioMasterGain = audioContext.createGain();
+            audioMasterGain.gain.value = audioMuted ? 0 : 0.72;
+            audioMasterGain.connect(audioContext.destination);
+            audioReady = true;
+            createAmbientAudio();
+            return true;
+        }
+
+        function setAudioMuted(muted) {
+            audioMuted = muted;
+            if (audioMasterGain) {
+                audioMasterGain.gain.setTargetAtTime(audioMuted ? 0 : 0.72, audioContext.currentTime, 0.05);
+            }
+            showStatusMessage(audioMuted ? 'Som desligado.' : 'Som ligado.');
+        }
+
+        function createNoiseBuffer(duration = 0.18) {
+            if (!audioContext) return null;
+            const length = Math.max(1, Math.floor(audioContext.sampleRate * duration));
+            const buffer = audioContext.createBuffer(1, length, audioContext.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < length; i++) {
+                data[i] = (Math.random() * 2 - 1) * (1 - i / length);
+            }
+            return buffer;
+        }
+
+        function playTone(freq, duration = 0.12, type = 'sine', volume = 0.18, detune = 0) {
+            if (!ensureAudio() || audioMuted) return;
+            const now = audioContext.currentTime;
+            const osc = audioContext.createOscillator();
+            const gain = audioContext.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, now);
+            osc.detune.setValueAtTime(detune, now);
+            gain.gain.setValueAtTime(0.0001, now);
+            gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, volume), now + 0.012);
+            gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+            osc.connect(gain);
+            gain.connect(audioMasterGain);
+            osc.start(now);
+            osc.stop(now + duration + 0.03);
+        }
+
+        function playNoise(duration = 0.12, volume = 0.2, filterFreq = 900, type = 'lowpass') {
+            if (!ensureAudio() || audioMuted) return;
+            const now = audioContext.currentTime;
+            const source = audioContext.createBufferSource();
+            const filter = audioContext.createBiquadFilter();
+            const gain = audioContext.createGain();
+            source.buffer = createNoiseBuffer(duration);
+            filter.type = type;
+            filter.frequency.setValueAtTime(filterFreq, now);
+            gain.gain.setValueAtTime(Math.max(0.0001, volume), now);
+            gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+            source.connect(filter);
+            filter.connect(gain);
+            gain.connect(audioMasterGain);
+            source.start(now);
+        }
+
+        function playSound(name) {
+            if (!ensureAudio() || audioMuted) return;
+            switch (name) {
+                case 'menu':
+                    playTone(420, 0.055, 'square', 0.08);
+                    playTone(640, 0.08, 'triangle', 0.05);
+                    break;
+                case 'step':
+                    playNoise(0.055, 0.08, 420, 'lowpass');
+                    break;
+                case 'jump':
+                    playTone(190, 0.11, 'triangle', 0.09);
+                    break;
+                case 'land':
+                    playNoise(0.09, 0.13, 260, 'lowpass');
+                    break;
+                case 'break':
+                    playNoise(0.13, 0.23, 760, 'bandpass');
+                    playTone(110, 0.08, 'square', 0.05);
+                    break;
+                case 'place':
+                    playNoise(0.08, 0.16, 520, 'lowpass');
+                    playTone(160, 0.06, 'triangle', 0.06);
+                    break;
+                case 'hit':
+                    playNoise(0.07, 0.18, 950, 'bandpass');
+                    playTone(95, 0.08, 'sawtooth', 0.07);
+                    break;
+                case 'hurt':
+                    playTone(150, 0.13, 'sawtooth', 0.15);
+                    playTone(92, 0.18, 'square', 0.08);
+                    break;
+                case 'eat':
+                    playNoise(0.16, 0.11, 650, 'bandpass');
+                    setTimeout(() => playNoise(0.13, 0.09, 580, 'bandpass'), 90);
+                    break;
+                case 'door':
+                    playTone(120, 0.12, 'square', 0.08);
+                    playNoise(0.14, 0.09, 340, 'lowpass');
+                    break;
+                case 'chest':
+                    playTone(210, 0.08, 'triangle', 0.08);
+                    playTone(150, 0.11, 'triangle', 0.06);
+                    break;
+                case 'sleep':
+                    playTone(320, 0.2, 'sine', 0.06);
+                    setTimeout(() => playTone(480, 0.22, 'sine', 0.05), 120);
+                    break;
+                case 'water':
+                    playNoise(0.2, 0.13, 720, 'lowpass');
+                    break;
+                case 'lava':
+                    playNoise(0.24, 0.15, 240, 'lowpass');
+                    playTone(70, 0.22, 'sawtooth', 0.05);
+                    break;
+                case 'monster':
+                    playTone(72, 0.28, 'sawtooth', 0.08, -20);
+                    playNoise(0.22, 0.05, 190, 'lowpass');
+                    break;
+                case 'save':
+                    playTone(520, 0.08, 'triangle', 0.06);
+                    setTimeout(() => playTone(760, 0.12, 'triangle', 0.06), 70);
+                    break;
+            }
+        }
+
+        function createAmbientAudio() {
+            if (!audioContext || ambientAudioNodes.water) return;
+            ambientAudioNodes.water = createAmbientLayer(180, 'sine');
+            ambientAudioNodes.lava = createAmbientLayer(58, 'sawtooth');
+            ambientAudioNodes.cave = createAmbientLayer(42, 'triangle');
+        }
+
+        function createAmbientLayer(freq, type) {
+            const osc = audioContext.createOscillator();
+            const gain = audioContext.createGain();
+            osc.type = type;
+            osc.frequency.value = freq;
+            gain.gain.value = 0;
+            osc.connect(gain);
+            gain.connect(audioMasterGain);
+            osc.start();
+            return { osc, gain };
+        }
+
+        function fluidProximity(kind, radius = 9) {
+            const px = Math.round(camera.position.x);
+            const py = Math.round(camera.position.y - PLAYER_HEIGHT);
+            const pz = Math.round(camera.position.z);
+            let closestSq = Infinity;
+            for (let x = px - radius; x <= px + radius; x++) {
+                for (let z = pz - radius; z <= pz + radius; z++) {
+                    for (let y = py - 3; y <= py + 3; y++) {
+                        const block = getBlockAt(x, y, z);
+                        if (!block || block.blockKind !== kind) continue;
+                        const dx = x - px, dy = y - py, dz = z - pz;
+                        closestSq = Math.min(closestSq, dx * dx + dy * dy + dz * dz);
+                    }
+                }
+            }
+            if (!Number.isFinite(closestSq)) return 0;
+            return clamp(1 - Math.sqrt(closestSq) / radius, 0, 1);
+        }
+
+        function updateAudio(delta) {
+            if (!audioReady || !audioContext || audioMuted) return;
+            fluidAmbientTimer -= delta;
+            if (fluidAmbientTimer <= 0) {
+                fluidAmbientTimer = 0.28;
+                const waterNear = fluidProximity('water', 10);
+                const lavaNear = fluidProximity('lava', 12);
+                ambientAudioNodes.water.gain.gain.setTargetAtTime(waterNear * 0.045, audioContext.currentTime, 0.35);
+                ambientAudioNodes.lava.gain.gain.setTargetAtTime(lavaNear * 0.065, audioContext.currentTime, 0.35);
+                ambientAudioNodes.cave.gain.gain.setTargetAtTime((currentBiomeId === 'lava' ? 0.025 : 0) + (1 - currentDaylight) * 0.01, audioContext.currentTime, 0.5);
+            }
+
+            const moving = controls.isLocked && isGrounded && !mountedHorse && (moveState.forward || moveState.backward || moveState.left || moveState.right);
+            if (moving) {
+                footstepTimer -= delta;
+                if (footstepTimer <= 0) {
+                    footstepTimer = 0.36;
+                    playSound('step');
+                }
+            } else {
+                footstepTimer = 0;
+            }
+
+            hostileSoundTimer -= delta;
+            if (hostileSoundTimer <= 0 && hostiles.length > 0) {
+                const nearHostile = hostiles.some(hostile => hostile.group.position.distanceToSquared(camera.position) < 18 * 18);
+                if (nearHostile) {
+                    playSound('monster');
+                    hostileSoundTimer = 3.5 + Math.random() * 2.4;
+                } else {
+                    hostileSoundTimer = 1.2;
+                }
+            }
+        }
 
         // --- ILUMINAÇÃO ---
         function createGlowTexture(innerColor, outerColor) {
@@ -1907,6 +2126,8 @@
 
         blocker.addEventListener('click', (event) => {
             if (event.target.closest('#world-options, #save-panel, #inventory-panel')) return;
+            ensureAudio();
+            playSound('menu');
             controls.lock();
         });
 
@@ -1930,6 +2151,7 @@
         const clock = new THREE.Clock();
 
         window.addEventListener('keydown', (e) => {
+            ensureAudio();
             if ((e.ctrlKey && e.code === 'KeyS') || e.code === 'KeyP') {
                 e.preventDefault();
                 if (document.body.classList.contains('save-panel-open')) {
@@ -1974,12 +2196,17 @@
                 case 'KeyN':
                     dayTime = (dayTime + 0.5) % 1;
                     updateDayNight(0);
+                    playSound('menu');
+                    break;
+                case 'KeyM':
+                    if (!e.repeat) setAudioMuted(!audioMuted);
                     break;
                 case 'Space':
                     if (mountedHorse) {
                         if (!e.repeat && mountedHorse.grounded) {
                             mountedHorse.velocityY = mountedHorse.jumpStrength;
                             mountedHorse.grounded = false;
+                            playSound('jump');
                         }
                         break;
                     }
@@ -1987,18 +2214,19 @@
                         velocity.y = JUMP_SPEED;
                         isGrounded = false;
                         jumpGraceTimer = 0;
+                        playSound('jump');
                     }
                     break;
-                case 'Digit1': selectHotbarSlot('1'); break;
-                case 'Digit2': selectHotbarSlot('2'); break;
-                case 'Digit3': selectHotbarSlot('3'); break;
-                case 'Digit4': selectHotbarSlot('4'); break;
-                case 'Digit5': selectHotbarSlot('5'); break;
-                case 'Digit6': selectHotbarSlot('6'); break;
-                case 'Digit7': selectHotbarSlot('7'); break;
-                case 'Digit8': selectHotbarSlot('8'); break;
-                case 'Digit9': selectHotbarSlot('9'); break;
-                case 'Digit0': selectHotbarSlot('0'); break;
+                case 'Digit1': selectHotbarSlot('1'); playSound('menu'); break;
+                case 'Digit2': selectHotbarSlot('2'); playSound('menu'); break;
+                case 'Digit3': selectHotbarSlot('3'); playSound('menu'); break;
+                case 'Digit4': selectHotbarSlot('4'); playSound('menu'); break;
+                case 'Digit5': selectHotbarSlot('5'); playSound('menu'); break;
+                case 'Digit6': selectHotbarSlot('6'); playSound('menu'); break;
+                case 'Digit7': selectHotbarSlot('7'); playSound('menu'); break;
+                case 'Digit8': selectHotbarSlot('8'); playSound('menu'); break;
+                case 'Digit9': selectHotbarSlot('9'); playSound('menu'); break;
+                case 'Digit0': selectHotbarSlot('0'); playSound('menu'); break;
             }
         });
 
@@ -2312,6 +2540,7 @@
                 const message = `Mundo ${slot} salvo: ${payload.blocks.length} blocos.`;
                 setSaveFeedback(message);
                 showStatusMessage(message);
+                playSound('save');
                 return true;
             } catch (error) {
                 const quota = error && (error.name === 'QuotaExceededError' || error.code === 22);
@@ -2435,7 +2664,7 @@
                 const position = saveArrayToVector(item.position);
                 createDoor(position.x, position.y - 0.5, position.z, item.facing || 'south');
                 const door = doors[doors.length - 1];
-                if (door && item.open) toggleDoor(door);
+                if (door && item.open) toggleDoor(door, true);
             });
 
             (props.torches || []).forEach(item => {
@@ -2664,6 +2893,7 @@
             if (now - lastDamageTime < 650) return;
             lastDamageTime = now;
             playerHealth = clamp(playerHealth - amount, 0, 20);
+            playSound(amount >= 4 ? 'lava' : 'hurt');
             updateSurvivalHud();
             if (playerHealth <= 0) {
                 showStatusMessage('Voce caiu! Voltando ao spawn.');
@@ -2687,6 +2917,7 @@
             playerHealth = clamp(playerHealth + 6, 0, 20);
             updateSurvivalHud();
             showStatusMessage('Carne comida: +3 coracoes.');
+            playSound('eat');
             return true;
         }
 
@@ -2714,6 +2945,7 @@
             updateDurabilityHud();
             if (toolDurability[tool] === 0) {
                 showStatusMessage(`${activeItem.id} quebrou! Durabilidade esgotada.`);
+                playSound('break');
                 toolDurability[tool] = TOOL_DURABILITY_MAX[tool]; // Recarrega (sem desaparecer)
                 updateDurabilityHud();
             }
@@ -2837,6 +3069,7 @@
                     button.appendChild(icon);
 
                     button.addEventListener('click', () => {
+                        playSound('menu');
                         applySelectedItem(item);
                         closeInventoryPanel(true);
                     });
@@ -2920,6 +3153,7 @@
         // Inventário clicável
         document.querySelectorAll('.slot').forEach(slot => {
             slot.addEventListener('click', (e) => {
+                playSound('menu');
                 selectHotbarSlot(e.currentTarget.dataset.slot);
                 if (!inventoryOpen && !controls.isLocked) {
                     tryRelockControls();
@@ -2929,9 +3163,13 @@
             slot.addEventListener('mouseleave', hideMineTooltip);
         });
 
-        document.getElementById('inventory-close').addEventListener('click', closeInventoryPanel);
+        document.getElementById('inventory-close').addEventListener('click', () => {
+            playSound('menu');
+            closeInventoryPanel();
+        });
         document.querySelectorAll('.inventory-tab').forEach(tab => {
             tab.addEventListener('click', (e) => {
+                playSound('menu');
                 inventoryFilter = e.currentTarget.dataset.inventoryFilter;
                 document.querySelectorAll('.inventory-tab').forEach(item => item.classList.remove('active'));
                 e.currentTarget.classList.add('active');
@@ -2958,12 +3196,17 @@
             biomeApply.addEventListener('click', (event) => {
                 event.preventDefault();
                 event.stopPropagation();
+                playSound('menu');
                 resetWorldForBiome(biomeSelect.value);
             });
         }
 
-        document.getElementById('save-close').addEventListener('click', closeSavePanel);
+        document.getElementById('save-close').addEventListener('click', () => {
+            playSound('menu');
+            closeSavePanel();
+        });
         document.getElementById('save-import').addEventListener('click', () => {
+            playSound('menu');
             document.getElementById('save-file-input').click();
         });
         document.getElementById('save-file-input').addEventListener('change', (e) => {
@@ -2977,6 +3220,7 @@
             const slot = Number(button.dataset.saveSlot) || QUICK_SAVE_SLOT;
             const action = button.dataset.saveAction;
             const previousText = button.textContent;
+            playSound('menu');
             button.disabled = true;
             button.textContent = action === 'save' ? 'Salvando...' : action === 'load' ? 'Carregando...' : 'Exportando...';
             try {
@@ -3914,6 +4158,7 @@
 
             if (activeItem.kind !== 'tool') {
                 deleteBlockAt(pos.x, pos.y, pos.z);
+                playSound('break');
                 return;
             }
 
@@ -3927,10 +4172,12 @@
                 const trunkBlocks = collectConnectedBlocks(pos, ['wood'], 36);
                 const leafBlocks = collectLeavesNear(trunkBlocks, 3);
                 deleteBlocksAtPositions([...trunkBlocks, ...leafBlocks]);
+                playSound('break');
                 return;
             }
 
             deleteBlockAt(pos.x, pos.y, pos.z);
+            playSound('break');
         }
 
         function registerTorchHitbox(torch, object) {
@@ -4132,6 +4379,7 @@
             animal.group.scale.setScalar(0.92);
             setTimeout(() => animal.group.scale.setScalar(1), 90);
             consumeToolDurability();
+            playSound('hit');
             if (animal.health <= 0) {
                 playerMeat += animal.type === 'chicken' ? 1 : 2;
                 updateSurvivalHud();
@@ -4147,6 +4395,7 @@
             villager.group.scale.setScalar(0.92);
             setTimeout(() => villager.group.scale.setScalar(1), 90);
             consumeToolDurability();
+            playSound('hit');
             if (villager.health <= 0) {
                 showStatusMessage('Aldeao derrotado.');
                 scene.remove(villager.group);
@@ -4626,8 +4875,10 @@
             hostile.group.scale.setScalar(0.9);
             setTimeout(() => hostile.group.scale.setScalar(1), 90);
             consumeToolDurability();
+            playSound('hit');
             if (hostile.health <= 0) {
                 showStatusMessage('Monstro derrotado.');
+                playSound('monster');
                 removeHostile(hostile);
             }
         }
@@ -4638,6 +4889,7 @@
             velocity.set(0, 0, 0);
             isGrounded = true;
             showStatusMessage('Montado! SHIFT para desmontar | ESPACO para pular');
+            playSound('place');
         }
 
         function dismountHorse() {
@@ -4646,6 +4898,7 @@
             mountedHorse = null;
             camera.position.set(horse.group.position.x + 1.2, horse.group.position.y + PLAYER_HEIGHT + 0.5, horse.group.position.z);
             velocity.set(0, 0, 0);
+            playSound('step');
         }
 
         function updateMountedHorse(delta) {
@@ -4890,10 +5143,11 @@
             doorHitObjects.push(hitbox);
         }
 
-        function toggleDoor(door) {
+        function toggleDoor(door, silent = false) {
             if (!door) return;
             door.userData.open = !door.userData.open;
             door.rotation.y = door.userData.open ? door.userData.openRotation : door.userData.closedRotation;
+            if (!silent) playSound('door');
         }
 
         function createCampfire(position) {
@@ -4976,6 +5230,7 @@
             hostiles.slice().forEach(removeHostile);
             updateDayNight(0);
             showStatusMessage('Voce dormiu. Amanheceu!');
+            playSound('sleep');
         }
 
         function createChest(position) {
@@ -5018,6 +5273,7 @@
                 showStatusMessage('Bau vazio.');
             }
             updateSurvivalHud();
+            playSound('chest');
         }
 
         function updateCampfires(delta) {
@@ -5040,6 +5296,7 @@
             const waterRemoved = cleanupFloatingWater([blockPosition]);
             refreshBlockAndNeighbors(blockPosition.x, blockPosition.y, blockPosition.z);
             waterRemoved.forEach(pos => refreshBlockAndNeighbors(pos.x, pos.y, pos.z));
+            playSound('water');
             return true;
         }
 
@@ -5052,6 +5309,7 @@
             createBlock(target.x, target.y, target.z, matWater, { solid: false, deferMesh: true, blockKind: 'water' });
             bucketHasWater = false;
             refreshBlockAndNeighbors(target.x, target.y, target.z);
+            playSound('water');
             return true;
         }
 
@@ -5258,6 +5516,7 @@
         }
 
         function updatePlayerVerticalPhysics(delta) {
+            const wasGrounded = isGrounded;
             velocity.y -= 9.8 * 2.0 * delta;
             velocity.y = Math.max(velocity.y, PLAYER_MAX_FALL_SPEED);
 
@@ -5281,6 +5540,7 @@
                     camera.position.y = standHeight;
                     isGrounded = true;
                     jumpGraceTimer = JUMP_GRACE_TIME;
+                    if (!wasGrounded) playSound('land');
                 } else {
                     isGrounded = false;
                     jumpGraceTimer = Math.max(0, jumpGraceTimer - delta);
@@ -5322,6 +5582,7 @@
         }
 
         window.addEventListener('mousedown', (e) => {
+            ensureAudio();
             if (inventoryOpen || !controls.isLocked) return;
 
             raycaster.setFromCamera(mouse, camera);
@@ -5342,12 +5603,14 @@
                 const torchHit = torchHits.length > 0 && torchHits[0].distance < 6 ? torchHits[0] : null;
                 if (torchHit && (!blockHit || torchHit.distance <= blockHit.distance + 0.1)) {
                     removeTorch(torchHit.object.userData.torch);
+                    playSound('break');
                     return;
                 }
 
                 const campfireHit = campfireHits.length > 0 && campfireHits[0].distance < 6 ? campfireHits[0] : null;
                 if (campfireHit && (!blockHit || campfireHit.distance <= blockHit.distance + 0.1)) {
                     removeCampfire(campfireHit.object.userData.campfire);
+                    playSound('break');
                     return;
                 }
 
@@ -5421,12 +5684,16 @@
 
                         if (activeItem.tool === 'torch') {
                             placeTorchOnFace(p, intersect.face.normal);
+                            playSound('place');
                         } else if (activeItem.tool === 'campfire') {
                             placeCampfireOnFace(p, intersect.face.normal);
+                            playSound('place');
                         } else if (activeItem.tool === 'bed') {
                             placeBedOnFace(p, intersect.face.normal);
+                            playSound('place');
                         } else if (activeItem.tool === 'chest') {
                             placeChestOnFace(p, intersect.face.normal);
+                            playSound('place');
                         } else if (activeItem.tool === 'bucket') {
                             if (!collectWaterAt(p)) {
                                 placeWaterFromBucket(p, intersect.face.normal);
@@ -5434,6 +5701,7 @@
                         } else if (activeItem.tool === 'shovel' && block && ['grass', 'dirt', 'sand'].includes(block.renderType)) {
                             setBlock(p.x, p.y, p.z, matPath);
                             refreshBlockAndNeighbors(p.x, p.y, p.z);
+                            playSound('place');
                         }
 
                         return;
@@ -5460,6 +5728,7 @@
                     const selectedMat = getActiveBlockMaterial();
 
                     createBlock(newPos.x, newPos.y, newPos.z, selectedMat);
+                    playSound('place');
                 }
             }
         });
@@ -5474,6 +5743,7 @@
             updateDayNight(delta);
             updateWaterVisuals(delta);
             updateLocalLightBudget(delta);
+            updateAudio(delta);
 
             if (mountedHorse) {
                 if (controls.isLocked) updateMountedHorse(delta);
