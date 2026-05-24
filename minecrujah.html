@@ -248,6 +248,129 @@
             display: none;
         }
 
+        #save-panel {
+            position: fixed;
+            inset: 0;
+            z-index: 45;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.46);
+            backdrop-filter: blur(3px);
+        }
+
+        body.save-panel-open #save-panel {
+            display: flex;
+        }
+
+        body.save-panel-open #crosshair {
+            display: none;
+        }
+
+        #save-window {
+            width: min(740px, calc(100vw - 24px));
+            max-height: min(690px, calc(100vh - 28px));
+            background: #c6c6c6;
+            border: 5px solid;
+            border-color: #ffffff #555555 #555555 #ffffff;
+            box-shadow: 0 22px 65px rgba(0, 0, 0, 0.58);
+            color: #202020;
+            image-rendering: pixelated;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #save-titlebar {
+            min-height: 42px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            font-weight: 800;
+            text-shadow: 1px 1px 0 #fefefe;
+            border-bottom: 4px solid #8b8b8b;
+        }
+
+        #save-close {
+            width: 30px;
+            height: 30px;
+            border: 3px solid;
+            border-color: #ffffff #555555 #555555 #ffffff;
+            background: #a0a0a0;
+            color: #202020;
+            font-weight: 900;
+            cursor: pointer;
+        }
+
+        #save-slots {
+            padding: 12px;
+            display: grid;
+            gap: 8px;
+            overflow-y: auto;
+        }
+
+        .save-slot {
+            display: grid;
+            grid-template-columns: minmax(170px, 1fr) auto auto auto;
+            gap: 6px;
+            align-items: center;
+            padding: 8px;
+            background: #a8a8a8;
+            border: 3px solid;
+            border-color: #373737 #fefefe #fefefe #373737;
+        }
+
+        .save-slot-info {
+            min-width: 0;
+            line-height: 1.35;
+            text-shadow: 1px 1px 0 #d8d8d8;
+        }
+
+        .save-slot-title {
+            font-weight: 900;
+        }
+
+        .save-slot-meta {
+            color: #353535;
+            font-size: 0.76rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .save-action,
+        #save-import {
+            min-height: 34px;
+            border: 3px solid;
+            border-color: #ffffff #555555 #555555 #ffffff;
+            background: #cfcfcf;
+            color: #202020;
+            font-weight: 800;
+            font-family: inherit;
+            padding: 0 10px;
+            cursor: pointer;
+        }
+
+        .save-action:disabled {
+            opacity: 0.45;
+            cursor: default;
+        }
+
+        #save-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 10px 12px;
+            border-top: 4px solid #8b8b8b;
+            font-size: 0.78rem;
+            color: #2d2d2d;
+        }
+
+        #save-import {
+            flex: 0 0 auto;
+        }
+
         #inventory-window {
             width: min(632px, calc(100vw - 24px));
             max-height: min(620px, calc(100vh - 36px));
@@ -379,6 +502,19 @@
         }
 
         @media (max-width: 640px) {
+            .save-slot {
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .save-slot-info {
+                grid-column: 1 / -1;
+            }
+
+            #save-footer {
+                align-items: stretch;
+                flex-direction: column;
+            }
+
             #inventory-toolbar {
                 grid-template-columns: repeat(3, 1fr);
             }
@@ -659,6 +795,21 @@
                 <input id="inventory-search" type="text" placeholder="Pesquisar">
             </div>
             <div id="inventory-grid"></div>
+        </div>
+    </div>
+
+    <div id="save-panel" aria-hidden="true">
+        <div id="save-window">
+            <div id="save-titlebar">
+                <span>Jogos salvos</span>
+                <button id="save-close" type="button">x</button>
+            </div>
+            <div id="save-slots"></div>
+            <div id="save-footer">
+                <span>Os slots ficam neste navegador. Use exportar/importar para guardar arquivos .json na pasta do projeto.</span>
+                <button id="save-import" type="button">Importar arquivo</button>
+                <input id="save-file-input" type="file" accept="application/json,.json" hidden>
+            </div>
         </div>
     </div>
 
@@ -1198,6 +1349,9 @@
         const materialToRenderType = new Map(BLOCK_RENDER_TYPES.map(type => [type.material, type.id]));
         const renderTypeToMaterial = new Map(BLOCK_RENDER_TYPES.map(type => [type.id, type.material]));
         const SAVE_STORAGE_KEY = 'minecrujah-save-v1';
+        const SAVE_INDEX_KEY = 'minecrujah-save-index-v1';
+        const SAVE_SLOT_COUNT = 4;
+        const QUICK_SAVE_SLOT = 1;
         const SAVE_BLOCK_TYPES = BLOCK_RENDER_TYPES.map(type => type.id);
         const SAVE_BLOCK_TYPE_INDEX = new Map(SAVE_BLOCK_TYPES.map((type, index) => [type, index]));
         const SAVE_BLOCK_KINDS = ['solid', 'water'];
@@ -1550,13 +1704,22 @@
         window.addEventListener('keydown', (e) => {
             if ((e.ctrlKey && e.code === 'KeyS') || e.code === 'KeyP') {
                 e.preventDefault();
-                saveGame();
+                if (document.body.classList.contains('save-panel-open')) {
+                    closeSavePanel();
+                    return;
+                }
+                saveGame(QUICK_SAVE_SLOT);
                 return;
             }
 
             if ((e.ctrlKey && e.code === 'KeyO') || e.code === 'KeyO') {
                 e.preventDefault();
-                loadGame();
+                openSavePanel();
+                return;
+            }
+
+            if (document.body.classList.contains('save-panel-open')) {
+                if (e.code === 'Escape') closeSavePanel();
                 return;
             }
 
@@ -1719,13 +1882,65 @@
             ];
         }
 
-        function createSavePayload() {
+        function getSaveSlotKey(slot) {
+            return `${SAVE_STORAGE_KEY}-slot-${slot}`;
+        }
+
+        function getSaveIndex() {
+            try {
+                const rawIndex = localStorage.getItem(SAVE_INDEX_KEY);
+                const parsed = rawIndex ? JSON.parse(rawIndex) : {};
+                return parsed && typeof parsed === 'object' ? parsed : {};
+            } catch (error) {
+                return {};
+            }
+        }
+
+        function setSaveIndexEntry(slot, metadata) {
+            const index = getSaveIndex();
+            index[String(slot)] = metadata;
+            localStorage.setItem(SAVE_INDEX_KEY, JSON.stringify(index));
+        }
+
+        function getStoredSave(slot) {
+            return localStorage.getItem(getSaveSlotKey(slot)) || (slot === QUICK_SAVE_SLOT ? localStorage.getItem(SAVE_STORAGE_KEY) : null);
+        }
+
+        function getSaveMetadata(slot) {
+            const index = getSaveIndex();
+            const entry = index[String(slot)];
+            if (entry) return entry;
+
+            const rawSave = getStoredSave(slot);
+            if (!rawSave) return null;
+
+            try {
+                const save = JSON.parse(rawSave);
+                return {
+                    name: save.name || `Mundo ${slot}`,
+                    savedAt: save.savedAt || null,
+                    blockCount: Array.isArray(save.blocks) ? save.blocks.length : 0
+                };
+            } catch (error) {
+                return null;
+            }
+        }
+
+        function formatSaveDate(value) {
+            if (!value) return 'sem data';
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) return 'sem data';
+            return date.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+        }
+
+        function createSavePayload(slot = QUICK_SAVE_SLOT) {
             const blocks = Object.values(worldBlocks)
                 .map(serializeBlock)
                 .filter(Boolean);
 
             return {
                 version: 1,
+                name: `Mundo ${slot}`,
                 savedAt: new Date().toISOString(),
                 blocks,
                 player: {
@@ -1758,11 +1973,19 @@
             };
         }
 
-        function saveGame() {
+        function saveGame(slot = QUICK_SAVE_SLOT) {
             try {
-                const payload = createSavePayload();
-                localStorage.setItem(SAVE_STORAGE_KEY, JSON.stringify(payload));
-                showStatusMessage(`Jogo salvo: ${payload.blocks.length} blocos.`);
+                const payload = createSavePayload(slot);
+                const rawPayload = JSON.stringify(payload);
+                localStorage.setItem(getSaveSlotKey(slot), rawPayload);
+                if (slot === QUICK_SAVE_SLOT) localStorage.setItem(SAVE_STORAGE_KEY, rawPayload);
+                setSaveIndexEntry(slot, {
+                    name: payload.name,
+                    savedAt: payload.savedAt,
+                    blockCount: payload.blocks.length
+                });
+                renderSaveSlots();
+                showStatusMessage(`Jogo salvo no Mundo ${slot}: ${payload.blocks.length} blocos.`);
                 return true;
             } catch (error) {
                 const quota = error && (error.name === 'QuotaExceededError' || error.code === 22);
@@ -1896,8 +2119,27 @@
             updateDurabilityHud();
         }
 
-        function loadGame() {
-            const rawSave = localStorage.getItem(SAVE_STORAGE_KEY);
+        function applySavePayload(save, sourceLabel = 'save') {
+            if (!save || save.version !== 1 || !Array.isArray(save.blocks)) {
+                showStatusMessage('Save invalido.');
+                return false;
+            }
+
+            clearSavedProps();
+            clearWorldMeshes();
+            clearWorldBlocks();
+            restoreSavedBlocks(save.blocks);
+            rebuildSurfaceHeightsFromWorld();
+            buildVisibleMeshes();
+            restoreSavedProps(save.props);
+            restoreWorldState(save);
+            restorePlayerState(save);
+            showStatusMessage(`${sourceLabel} carregado: ${save.blocks.length} blocos.`);
+            return true;
+        }
+
+        function loadGame(slot = QUICK_SAVE_SLOT) {
+            const rawSave = getStoredSave(slot);
             if (!rawSave) {
                 showStatusMessage('Nenhum save encontrado.');
                 return false;
@@ -1905,22 +2147,7 @@
 
             try {
                 const save = JSON.parse(rawSave);
-                if (!save || save.version !== 1 || !Array.isArray(save.blocks)) {
-                    showStatusMessage('Save invalido.');
-                    return false;
-                }
-
-                clearSavedProps();
-                clearWorldMeshes();
-                clearWorldBlocks();
-                restoreSavedBlocks(save.blocks);
-                rebuildSurfaceHeightsFromWorld();
-                buildVisibleMeshes();
-                restoreSavedProps(save.props);
-                restoreWorldState(save);
-                restorePlayerState(save);
-                showStatusMessage(`Jogo carregado: ${save.blocks.length} blocos.`);
-                return true;
+                return applySavePayload(save, `Mundo ${slot}`);
             } catch (error) {
                 showStatusMessage('Nao foi possivel carregar o save.');
                 return false;
@@ -1928,7 +2155,122 @@
         }
 
         function hasSavedGame() {
-            return !!localStorage.getItem(SAVE_STORAGE_KEY);
+            for (let slot = 1; slot <= SAVE_SLOT_COUNT; slot++) {
+                if (getStoredSave(slot)) return true;
+            }
+            return false;
+        }
+
+        function renderSaveSlots() {
+            const container = document.getElementById('save-slots');
+            if (!container) return;
+            container.innerHTML = '';
+
+            for (let slot = 1; slot <= SAVE_SLOT_COUNT; slot++) {
+                const metadata = getSaveMetadata(slot);
+                const row = document.createElement('div');
+                row.className = 'save-slot';
+                row.innerHTML = `
+                    <div class="save-slot-info">
+                        <div class="save-slot-title">Mundo ${slot}</div>
+                        <div class="save-slot-meta">${metadata ? `${formatSaveDate(metadata.savedAt)} - ${metadata.blockCount || 0} blocos` : 'Slot vazio'}</div>
+                    </div>
+                    <button class="save-action" type="button" data-save-action="save" data-save-slot="${slot}">Salvar</button>
+                    <button class="save-action" type="button" data-save-action="load" data-save-slot="${slot}" ${metadata ? '' : 'disabled'}>Carregar</button>
+                    <button class="save-action" type="button" data-save-action="export" data-save-slot="${slot}" ${metadata ? '' : 'disabled'}>Exportar</button>
+                `;
+                container.appendChild(row);
+            }
+        }
+
+        function openSavePanel() {
+            if (controls.isLocked) controls.unlock();
+            if (inventoryOpen) closeInventoryPanel(false);
+            hideMineTooltip();
+            renderSaveSlots();
+            document.body.classList.add('save-panel-open');
+            document.getElementById('save-panel').setAttribute('aria-hidden', 'false');
+        }
+
+        function closeSavePanel() {
+            document.body.classList.remove('save-panel-open');
+            document.getElementById('save-panel').setAttribute('aria-hidden', 'true');
+            showResumePrompt();
+        }
+
+        function getSaveDownloadName(slot, save) {
+            const stamp = (save.savedAt || new Date().toISOString()).slice(0, 19).replace(/[:T]/g, '-');
+            return `minecrujah-mundo-${slot}-${stamp}.json`;
+        }
+
+        function downloadSaveBlob(blob, filename) {
+            const objectUrl = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = objectUrl;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(objectUrl);
+        }
+
+        async function exportSaveFile(slot) {
+            const rawSave = getStoredSave(slot);
+            if (!rawSave) {
+                showStatusMessage('Nada para exportar neste slot.');
+                return false;
+            }
+
+            try {
+                const save = JSON.parse(rawSave);
+                const blob = new Blob([JSON.stringify(save, null, 2)], { type: 'application/json' });
+                const filename = getSaveDownloadName(slot, save);
+                if (window.showSaveFilePicker) {
+                    const handle = await window.showSaveFilePicker({
+                        suggestedName: filename,
+                        types: [{
+                            description: 'Save MINECRUJAH',
+                            accept: { 'application/json': ['.json'] }
+                        }]
+                    });
+                    const writable = await handle.createWritable();
+                    await writable.write(blob);
+                    await writable.close();
+                } else {
+                    downloadSaveBlob(blob, filename);
+                }
+                showStatusMessage(`Mundo ${slot} exportado.`);
+                return true;
+            } catch (error) {
+                if (error && error.name === 'AbortError') return false;
+                showStatusMessage('Nao foi possivel exportar.');
+                return false;
+            }
+        }
+
+        function importSaveFile(file) {
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                try {
+                    const save = JSON.parse(String(reader.result || ''));
+                    if (applySavePayload(save, 'Arquivo')) {
+                        const rawPayload = JSON.stringify(save);
+                        localStorage.setItem(getSaveSlotKey(QUICK_SAVE_SLOT), rawPayload);
+                        localStorage.setItem(SAVE_STORAGE_KEY, rawPayload);
+                        setSaveIndexEntry(QUICK_SAVE_SLOT, {
+                            name: save.name || `Mundo ${QUICK_SAVE_SLOT}`,
+                            savedAt: save.savedAt || new Date().toISOString(),
+                            blockCount: Array.isArray(save.blocks) ? save.blocks.length : 0
+                        });
+                        renderSaveSlots();
+                    }
+                } catch (error) {
+                    showStatusMessage('Arquivo de save invalido.');
+                }
+            };
+            reader.onerror = () => showStatusMessage('Nao foi possivel ler o arquivo.');
+            reader.readAsText(file);
         }
 
         function damagePlayer(amount) {
@@ -2214,8 +2556,29 @@
             inventorySearch = e.currentTarget.value;
             renderInventoryGrid();
         });
+
+        document.getElementById('save-close').addEventListener('click', closeSavePanel);
+        document.getElementById('save-import').addEventListener('click', () => {
+            document.getElementById('save-file-input').click();
+        });
+        document.getElementById('save-file-input').addEventListener('change', (e) => {
+            const file = e.currentTarget.files && e.currentTarget.files[0];
+            importSaveFile(file);
+            e.currentTarget.value = '';
+        });
+        document.getElementById('save-slots').addEventListener('click', (e) => {
+            const button = e.target.closest('[data-save-action]');
+            if (!button || button.disabled) return;
+            const slot = Number(button.dataset.saveSlot) || QUICK_SAVE_SLOT;
+            const action = button.dataset.saveAction;
+            if (action === 'save') saveGame(slot);
+            if (action === 'load' && loadGame(slot)) closeSavePanel();
+            if (action === 'export') exportSaveFile(slot);
+        });
+
         hydrateSlotIcons();
         renderInventoryGrid();
+        renderSaveSlots();
         updateHeldItemView();
 
         // --- GERAÇÃO DO TERRENO ---
