@@ -371,6 +371,15 @@
             flex: 0 0 auto;
         }
 
+        #save-feedback {
+            min-height: 18px;
+            padding: 0 12px 10px;
+            color: #1f3f1f;
+            font-size: 0.8rem;
+            font-weight: 800;
+            text-shadow: 1px 1px 0 #e2e2e2;
+        }
+
         #inventory-window {
             width: min(632px, calc(100vw - 24px));
             max-height: min(620px, calc(100vh - 36px));
@@ -805,6 +814,7 @@
                 <button id="save-close" type="button">x</button>
             </div>
             <div id="save-slots"></div>
+            <div id="save-feedback" aria-live="polite"></div>
             <div id="save-footer">
                 <span>Os slots ficam neste navegador. Use exportar/importar para guardar arquivos .json na pasta do projeto.</span>
                 <button id="save-import" type="button">Importar arquivo</button>
@@ -1352,6 +1362,8 @@
         const SAVE_INDEX_KEY = 'minecrujah-save-index-v1';
         const SAVE_SLOT_COUNT = 4;
         const QUICK_SAVE_SLOT = 1;
+        const SAVE_DB_NAME = 'minecrujah-saves';
+        const SAVE_DB_STORE = 'slots';
         const SAVE_BLOCK_TYPES = BLOCK_RENDER_TYPES.map(type => type.id);
         const SAVE_BLOCK_TYPE_INDEX = new Map(SAVE_BLOCK_TYPES.map((type, index) => [type, index]));
         const SAVE_BLOCK_KINDS = ['solid', 'water'];
@@ -1886,6 +1898,80 @@
             return `${SAVE_STORAGE_KEY}-slot-${slot}`;
         }
 
+        function setSaveFeedback(text, isError = false) {
+            const feedback = document.getElementById('save-feedback');
+            if (!feedback) return;
+            feedback.textContent = text || '';
+            feedback.style.color = isError ? '#7a1f1f' : '#1f3f1f';
+        }
+
+        function openSaveDatabase() {
+            return new Promise(resolve => {
+                if (!window.indexedDB) {
+                    resolve(null);
+                    return;
+                }
+
+                const request = indexedDB.open(SAVE_DB_NAME, 1);
+                request.onupgradeneeded = () => {
+                    const db = request.result;
+                    if (!db.objectStoreNames.contains(SAVE_DB_STORE)) {
+                        db.createObjectStore(SAVE_DB_STORE);
+                    }
+                };
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => resolve(null);
+                request.onblocked = () => resolve(null);
+            });
+        }
+
+        function idbOperation(mode, callback) {
+            return openSaveDatabase().then(db => new Promise(resolve => {
+                if (!db) {
+                    resolve(null);
+                    return;
+                }
+
+                try {
+                    const transaction = db.transaction(SAVE_DB_STORE, mode);
+                    const store = transaction.objectStore(SAVE_DB_STORE);
+                    const request = callback(store);
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => resolve(null);
+                    transaction.oncomplete = () => db.close();
+                    transaction.onerror = () => db.close();
+                    transaction.onabort = () => db.close();
+                } catch (error) {
+                    db.close();
+                    resolve(null);
+                }
+            }));
+        }
+
+        async function readSaveFromIndexedDb(slot) {
+            return idbOperation('readonly', store => store.get(String(slot)));
+        }
+
+        async function writeSaveToIndexedDb(slot, rawPayload) {
+            const result = await idbOperation('readwrite', store => store.put(rawPayload, String(slot)));
+            return result !== null && result !== undefined;
+        }
+
+        function removeLegacySaveCopies(slot) {
+            try { localStorage.removeItem(getSaveSlotKey(slot)); } catch (error) {}
+            if (slot === QUICK_SAVE_SLOT) {
+                try { localStorage.removeItem(SAVE_STORAGE_KEY); } catch (error) {}
+            }
+        }
+
+        function cleanupLegacyLocalStorageDuplicate() {
+            try {
+                if (localStorage.getItem(getSaveSlotKey(QUICK_SAVE_SLOT))) {
+                    localStorage.removeItem(SAVE_STORAGE_KEY);
+                }
+            } catch (error) {}
+        }
+
         function getSaveIndex() {
             try {
                 const rawIndex = localStorage.getItem(SAVE_INDEX_KEY);
@@ -1897,22 +1983,43 @@
         }
 
         function setSaveIndexEntry(slot, metadata) {
-            const index = getSaveIndex();
-            index[String(slot)] = metadata;
-            localStorage.setItem(SAVE_INDEX_KEY, JSON.stringify(index));
+            try {
+                const index = getSaveIndex();
+                index[String(slot)] = metadata;
+                localStorage.setItem(SAVE_INDEX_KEY, JSON.stringify(index));
+            } catch (error) {}
         }
 
-        function getStoredSave(slot) {
-            return localStorage.getItem(getSaveSlotKey(slot)) || (slot === QUICK_SAVE_SLOT ? localStorage.getItem(SAVE_STORAGE_KEY) : null);
+        async function setStoredSave(slot, rawPayload) {
+            cleanupLegacyLocalStorageDuplicate();
+            const wroteToIndexedDb = await writeSaveToIndexedDb(slot, rawPayload);
+            if (wroteToIndexedDb) {
+                removeLegacySaveCopies(slot);
+                return 'indexeddb';
+            }
+
+            localStorage.setItem(getSaveSlotKey(slot), rawPayload);
+            return 'localstorage';
         }
 
-        function getSaveMetadata(slot) {
+        async function getStoredSave(slot) {
+            const indexedDbSave = await readSaveFromIndexedDb(slot);
+            if (indexedDbSave) return indexedDbSave;
+
+            try {
+                return localStorage.getItem(getSaveSlotKey(slot)) || (slot === QUICK_SAVE_SLOT ? localStorage.getItem(SAVE_STORAGE_KEY) : null);
+            } catch (error) {
+                return null;
+            }
+        }
+
+        async function getSaveMetadata(slot) {
+            const rawSave = await getStoredSave(slot);
+            if (!rawSave) return null;
+
             const index = getSaveIndex();
             const entry = index[String(slot)];
             if (entry) return entry;
-
-            const rawSave = getStoredSave(slot);
-            if (!rawSave) return null;
 
             try {
                 const save = JSON.parse(rawSave);
@@ -1973,23 +2080,27 @@
             };
         }
 
-        function saveGame(slot = QUICK_SAVE_SLOT) {
+        async function saveGame(slot = QUICK_SAVE_SLOT) {
+            setSaveFeedback(`Salvando Mundo ${slot}...`);
             try {
                 const payload = createSavePayload(slot);
                 const rawPayload = JSON.stringify(payload);
-                localStorage.setItem(getSaveSlotKey(slot), rawPayload);
-                if (slot === QUICK_SAVE_SLOT) localStorage.setItem(SAVE_STORAGE_KEY, rawPayload);
+                await setStoredSave(slot, rawPayload);
                 setSaveIndexEntry(slot, {
                     name: payload.name,
                     savedAt: payload.savedAt,
                     blockCount: payload.blocks.length
                 });
-                renderSaveSlots();
-                showStatusMessage(`Jogo salvo no Mundo ${slot}: ${payload.blocks.length} blocos.`);
+                await renderSaveSlots();
+                const message = `Mundo ${slot} salvo: ${payload.blocks.length} blocos.`;
+                setSaveFeedback(message);
+                showStatusMessage(message);
                 return true;
             } catch (error) {
                 const quota = error && (error.name === 'QuotaExceededError' || error.code === 22);
-                showStatusMessage(quota ? 'Save muito grande para o navegador.' : 'Nao foi possivel salvar.');
+                const message = quota ? 'Espaco insuficiente para salvar neste navegador.' : 'Nao foi possivel salvar.';
+                setSaveFeedback(message, true);
+                showStatusMessage(message);
                 return false;
             }
         }
@@ -2138,36 +2249,41 @@
             return true;
         }
 
-        function loadGame(slot = QUICK_SAVE_SLOT) {
-            const rawSave = getStoredSave(slot);
+        async function loadGame(slot = QUICK_SAVE_SLOT) {
+            setSaveFeedback(`Carregando Mundo ${slot}...`);
+            const rawSave = await getStoredSave(slot);
             if (!rawSave) {
+                setSaveFeedback('Nenhum save encontrado neste slot.', true);
                 showStatusMessage('Nenhum save encontrado.');
                 return false;
             }
 
             try {
                 const save = JSON.parse(rawSave);
-                return applySavePayload(save, `Mundo ${slot}`);
+                const loaded = applySavePayload(save, `Mundo ${slot}`);
+                if (loaded) setSaveFeedback(`Mundo ${slot} carregado.`);
+                return loaded;
             } catch (error) {
+                setSaveFeedback('Nao foi possivel carregar este save.', true);
                 showStatusMessage('Nao foi possivel carregar o save.');
                 return false;
             }
         }
 
-        function hasSavedGame() {
+        async function hasSavedGame() {
             for (let slot = 1; slot <= SAVE_SLOT_COUNT; slot++) {
-                if (getStoredSave(slot)) return true;
+                if (await getStoredSave(slot)) return true;
             }
             return false;
         }
 
-        function renderSaveSlots() {
+        async function renderSaveSlots() {
             const container = document.getElementById('save-slots');
             if (!container) return;
             container.innerHTML = '';
 
             for (let slot = 1; slot <= SAVE_SLOT_COUNT; slot++) {
-                const metadata = getSaveMetadata(slot);
+                const metadata = await getSaveMetadata(slot);
                 const row = document.createElement('div');
                 row.className = 'save-slot';
                 row.innerHTML = `
@@ -2187,6 +2303,7 @@
             if (controls.isLocked) controls.unlock();
             if (inventoryOpen) closeInventoryPanel(false);
             hideMineTooltip();
+            setSaveFeedback('');
             renderSaveSlots();
             document.body.classList.add('save-panel-open');
             document.getElementById('save-panel').setAttribute('aria-hidden', 'false');
@@ -2215,7 +2332,7 @@
         }
 
         async function exportSaveFile(slot) {
-            const rawSave = getStoredSave(slot);
+            const rawSave = await getStoredSave(slot);
             if (!rawSave) {
                 showStatusMessage('Nada para exportar neste slot.');
                 return false;
@@ -2256,14 +2373,19 @@
                     const save = JSON.parse(String(reader.result || ''));
                     if (applySavePayload(save, 'Arquivo')) {
                         const rawPayload = JSON.stringify(save);
-                        localStorage.setItem(getSaveSlotKey(QUICK_SAVE_SLOT), rawPayload);
-                        localStorage.setItem(SAVE_STORAGE_KEY, rawPayload);
-                        setSaveIndexEntry(QUICK_SAVE_SLOT, {
-                            name: save.name || `Mundo ${QUICK_SAVE_SLOT}`,
-                            savedAt: save.savedAt || new Date().toISOString(),
-                            blockCount: Array.isArray(save.blocks) ? save.blocks.length : 0
-                        });
-                        renderSaveSlots();
+                        setStoredSave(QUICK_SAVE_SLOT, rawPayload)
+                            .then(() => {
+                                setSaveIndexEntry(QUICK_SAVE_SLOT, {
+                                    name: save.name || `Mundo ${QUICK_SAVE_SLOT}`,
+                                    savedAt: save.savedAt || new Date().toISOString(),
+                                    blockCount: Array.isArray(save.blocks) ? save.blocks.length : 0
+                                });
+                                setSaveFeedback('Arquivo importado no Mundo 1.');
+                                renderSaveSlots();
+                            })
+                            .catch(() => {
+                                setSaveFeedback('Arquivo carregado, mas nao foi gravado no slot.', true);
+                            });
                     }
                 } catch (error) {
                     showStatusMessage('Arquivo de save invalido.');
@@ -2566,17 +2688,26 @@
             importSaveFile(file);
             e.currentTarget.value = '';
         });
-        document.getElementById('save-slots').addEventListener('click', (e) => {
+        document.getElementById('save-slots').addEventListener('click', async (e) => {
             const button = e.target.closest('[data-save-action]');
             if (!button || button.disabled) return;
             const slot = Number(button.dataset.saveSlot) || QUICK_SAVE_SLOT;
             const action = button.dataset.saveAction;
-            if (action === 'save') saveGame(slot);
-            if (action === 'load' && loadGame(slot)) closeSavePanel();
-            if (action === 'export') exportSaveFile(slot);
+            const previousText = button.textContent;
+            button.disabled = true;
+            button.textContent = action === 'save' ? 'Salvando...' : action === 'load' ? 'Carregando...' : 'Exportando...';
+            try {
+                if (action === 'save') await saveGame(slot);
+                if (action === 'load' && await loadGame(slot)) closeSavePanel();
+                if (action === 'export') await exportSaveFile(slot);
+            } finally {
+                button.disabled = false;
+                button.textContent = previousText;
+            }
         });
 
         hydrateSlotIcons();
+        cleanupLegacyLocalStorageDuplicate();
         renderInventoryGrid();
         renderSaveSlots();
         updateHeldItemView();
@@ -4757,9 +4888,9 @@
         // Posiciona jogador inicialmente acima do relevo central
         setPlayerAtSpawn();
         updateSurvivalHud();
-        if (hasSavedGame()) {
-            showStatusMessage('Save encontrado. Pressione O para carregar.');
-        }
+        hasSavedGame().then(found => {
+            if (found) showStatusMessage('Save encontrado. Pressione O para carregar.');
+        });
 
         // --- MECÂNICA DE CONSTRUÇÃO E DESTRUIÇÃO (RAYCASTING) ---
         const raycaster = new THREE.Raycaster();
