@@ -819,6 +819,7 @@
                         <option value="desert">Deserto</option>
                         <option value="snow">Neve</option>
                         <option value="mountains">Montanhas</option>
+                        <option value="lava">Mundo de Lava</option>
                     </select>
                 </label>
                 <button id="biome-apply" type="button">Criar mundo</button>
@@ -1137,6 +1138,9 @@
         const texHay = createVoxelTexture('#d4b23b', '#8c6a18', 'planks');
         const texSnow = createVoxelTexture('#e7eef4', '#9fb4c2', 'stone');
         const texCactus = createVoxelTexture('#2e7d3a', '#185328', 'normal');
+        const texBasalt = createVoxelTexture('#202126', '#0d0d10', 'stone');
+        const texAsh = createVoxelTexture('#4a3b36', '#201a1a', 'normal');
+        const texLava = createVoxelTexture('#ff8a1c', '#8f1c0c', 'coal');
         const texWaterSurface = createWaterSurfaceTexture();
 
         // Materiais multi-face para os blocos
@@ -1178,6 +1182,14 @@
         const matHay = new THREE.MeshLambertMaterial({ map: texHay });
         const matSnow = createFaceMaterials(texSnow, texSnow);
         const matCactus = new THREE.MeshLambertMaterial({ map: texCactus });
+        const matBasalt = createFaceMaterials(texBasalt, texBasalt);
+        const matAsh = createFaceMaterials(texAsh, texAsh);
+        const matLava = new THREE.MeshBasicMaterial({
+            map: texLava,
+            color: '#ff7a1a',
+            transparent: true,
+            opacity: 0.88
+        });
         const matWater = new THREE.MeshPhongMaterial({
             map: texWaterSurface,
             color: '#2f8fd3',
@@ -1271,7 +1283,10 @@
             { id: 'water', material: matWater },
             { id: 'glass', material: matGlass },
             { id: 'snow', material: matSnow },
-            { id: 'cactus', material: matCactus }
+            { id: 'cactus', material: matCactus },
+            { id: 'basalt', material: matBasalt },
+            { id: 'ash', material: matAsh },
+            { id: 'lava', material: matLava }
         ];
 
         function forEachMaterial(material, callback) {
@@ -1387,6 +1402,8 @@
             hay: matHay,
             snow: matSnow,
             cactus: matCactus,
+            basalt: matBasalt,
+            ash: matAsh,
             glass: matGlass
         };
         const SPRITE_BASE = 'https://raw.githubusercontent.com/odnols/Inventario-mine/main/img/itens/new/';
@@ -1417,6 +1434,8 @@
             { id: 'hay', name: 'Feno', internal: 'hay_block', category: 'blocks', kind: 'block', materialKey: 'hay', icon: 'decorativos/hay_block.png', description: 'Bloco de fazenda e celeiro' },
             { id: 'snow', name: 'Neve', internal: 'snow_block', category: 'blocks', kind: 'block', materialKey: 'snow', icon: 'construcao/snow.png', description: 'Bloco claro de bioma frio' },
             { id: 'cactus', name: 'Cacto', internal: 'cactus', category: 'blocks', kind: 'block', materialKey: 'cactus', icon: 'construcao/cactus.png', description: 'Bloco do deserto' },
+            { id: 'basalt', name: 'Basalto', internal: 'blackstone', category: 'blocks', kind: 'block', materialKey: 'basalt', icon: 'construcao/blackstone.png', description: 'Rocha escura do mundo de lava' },
+            { id: 'ash', name: 'Cinzas', internal: 'soul_soil', category: 'blocks', kind: 'block', materialKey: 'ash', icon: 'construcao/soul_soil.png', description: 'Solo quente do mundo de lava' },
             { id: 'pickaxe', name: 'Picareta de Pedra', internal: 'stone_pickaxe', category: 'tools', kind: 'tool', tool: 'pickaxe', hotbarSlot: '6', icon: 'ferramentas/stone_pickaxe.png', description: 'Quebra rocha e minerios' },
             { id: 'axe', name: 'Machado de Pedra', internal: 'stone_axe', category: 'tools', kind: 'tool', tool: 'axe', hotbarSlot: '7', icon: 'ferramentas/stone_axe.png', description: 'Derruba troncos conectados' },
             { id: 'shovel', name: 'Pa de Pedra', internal: 'stone_shovel', category: 'tools', kind: 'tool', tool: 'shovel', hotbarSlot: '8', icon: 'ferramentas/stone_shovel.png', description: 'Cria caminhos com clique direito' },
@@ -1443,6 +1462,13 @@
                 deepMaterial: matStone,
                 treeChanceMultiplier: 1,
                 cactusChance: 0,
+                lavaFallChance: 0,
+                caveBoost: 0,
+                liquidMaterial: matWater,
+                liquidKind: 'water',
+                generateVillages: true,
+                hostileLimit: 8,
+                hostileDaylightLimit: 0.38,
                 animalSurfaceTypes: ['grass']
             },
             desert: {
@@ -1456,6 +1482,13 @@
                 deepMaterial: matStone,
                 treeChanceMultiplier: 0,
                 cactusChance: 0.035,
+                lavaFallChance: 0,
+                caveBoost: 0,
+                liquidMaterial: matWater,
+                liquidKind: 'water',
+                generateVillages: true,
+                hostileLimit: 8,
+                hostileDaylightLimit: 0.38,
                 animalSurfaceTypes: ['sand']
             },
             snow: {
@@ -1469,6 +1502,13 @@
                 deepMaterial: matStone,
                 treeChanceMultiplier: 0.55,
                 cactusChance: 0,
+                lavaFallChance: 0,
+                caveBoost: 0.03,
+                liquidMaterial: matWater,
+                liquidKind: 'water',
+                generateVillages: true,
+                hostileLimit: 8,
+                hostileDaylightLimit: 0.38,
                 animalSurfaceTypes: ['snow']
             },
             mountains: {
@@ -1482,7 +1522,34 @@
                 deepMaterial: matStone,
                 treeChanceMultiplier: 0.25,
                 cactusChance: 0,
+                lavaFallChance: 0,
+                caveBoost: 0.05,
+                liquidMaterial: matWater,
+                liquidKind: 'water',
+                generateVillages: true,
+                hostileLimit: 10,
+                hostileDaylightLimit: 0.38,
                 animalSurfaceTypes: ['moss', 'cobble', 'stone']
+            },
+            lava: {
+                label: 'Mundo de Lava',
+                baseHeight: 12,
+                plainsScale: 0.85,
+                detailScale: 1.45,
+                mountainScale: 1.35,
+                surfaceMaterial: matAsh,
+                subsurfaceMaterial: matBasalt,
+                deepMaterial: matStone,
+                treeChanceMultiplier: 0,
+                cactusChance: 0,
+                lavaFallChance: 0.055,
+                caveBoost: 0.1,
+                liquidMaterial: matLava,
+                liquidKind: 'lava',
+                generateVillages: false,
+                hostileLimit: 18,
+                hostileDaylightLimit: 1.05,
+                animalSurfaceTypes: []
             }
         };
         const SAVE_STORAGE_KEY = 'minecrujah-save-v1';
@@ -1493,11 +1560,15 @@
         const SAVE_DB_STORE = 'slots';
         const SAVE_BLOCK_TYPES = BLOCK_RENDER_TYPES.map(type => type.id);
         const SAVE_BLOCK_TYPE_INDEX = new Map(SAVE_BLOCK_TYPES.map((type, index) => [type, index]));
-        const SAVE_BLOCK_KINDS = ['solid', 'water'];
+        const SAVE_BLOCK_KINDS = ['solid', 'water', 'lava'];
         const SAVE_BLOCK_KIND_INDEX = new Map(SAVE_BLOCK_KINDS.map((kind, index) => [kind, index]));
 
         function getCurrentBiome() {
             return BIOME_CONFIGS[currentBiomeId] || BIOME_CONFIGS.forest;
+        }
+
+        function isFluidKind(kind) {
+            return kind === 'water' || kind === 'lava';
         }
 
         function setCurrentBiome(biomeId) {
@@ -1732,10 +1803,13 @@
             const dayColor = hexToRgb('#5da8ff');
             const duskColor = hexToRgb('#d78b5f');
             const skyBase = mixColor(nightColor, dayColor, daylight);
-            const sky = mixColor(skyBase, duskColor, dusk * 0.22);
+            let sky = mixColor(skyBase, duskColor, dusk * 0.22);
+            if (currentBiomeId === 'lava') {
+                sky = mixColor(sky, hexToRgb('#5a1d16'), 0.36);
+            }
 
             setSceneColor(sky);
-            ambientLight.intensity = 0.31 + daylight * 0.15;
+            ambientLight.intensity = 0.31 + daylight * 0.15 + (currentBiomeId === 'lava' ? 0.08 : 0);
             hemiLight.intensity = 0.28 + daylight * 0.20;
             const sunStrength = smoothstep(0.16, 0.55, daylight);
             dirLight.intensity = sunStrength * 0.92;
@@ -1777,10 +1851,13 @@
             waterAnimationTime += delta;
             texWaterSurface.offset.x = (waterAnimationTime * 0.018) % 1;
             texWaterSurface.offset.y = (waterAnimationTime * 0.011) % 1;
+            texLava.offset.x = (waterAnimationTime * 0.009) % 1;
+            texLava.offset.y = (waterAnimationTime * 0.015) % 1;
             Object.values(instancedMeshes).forEach(mesh => {
-                if (mesh.userData.renderType !== 'water') return;
+                if (mesh.userData.renderType !== 'water' && mesh.userData.renderType !== 'lava') return;
                 mesh.position.y = Math.sin(waterAnimationTime * 1.8 + mesh.userData.chunkX * 0.35 + mesh.userData.chunkZ * 0.21) * 0.018;
-                mesh.material.opacity = matWater.opacity;
+                if (mesh.userData.renderType === 'water') mesh.material.opacity = matWater.opacity;
+                if (mesh.userData.renderType === 'lava') mesh.material.opacity = 0.82 + Math.sin(waterAnimationTime * 2.4) * 0.06;
             });
         }
 
@@ -3038,13 +3115,15 @@
         function getColumnTerrainMaterial(y, surfaceY, river) {
             const biome = getCurrentBiome();
             if (y === surfaceY) {
-                return river.influence > 0.35 ? matSand : biome.surfaceMaterial;
+                if (river.influence > 0.35) return currentBiomeId === 'lava' ? matBasalt : matSand;
+                return biome.surfaceMaterial;
             }
             if (y >= surfaceY - 3) return biome.subsurfaceMaterial;
             return biome.deepMaterial;
         }
 
         function generateTerrain() {
+            const biome = getCurrentBiome();
             for (let x = -WORLD_SIZE / 2; x < WORLD_SIZE / 2; x++) {
                 for (let z = -WORLD_DEPTH / 2; z < WORLD_DEPTH / 2; z++) {
                     const surfaceY = calculateSurfaceY(x, z);
@@ -3058,14 +3137,15 @@
 
                     if (river.isWater && surfaceY < WATER_LEVEL) {
                         for (let y = surfaceY + 1; y <= WATER_LEVEL; y++) {
-                            createBlock(x, y, z, matWater, { solid: false, deferMesh: true, blockKind: 'water' });
+                            createBlock(x, y, z, biome.liquidMaterial, { solid: false, deferMesh: true, blockKind: biome.liquidKind });
                         }
                     }
                 }
             }
 
             carveCaves();
-            generateVillages();
+            if (biome.generateVillages) generateVillages();
+            if (currentBiomeId === 'lava') generateLavaFalls();
             generateForests();
             // Repete cleanup até não restar nenhuma água solta (resolve cadeias)
             let _removed;
@@ -3078,6 +3158,7 @@
         }
 
         function carveCaves() {
+            const caveBoost = getCurrentBiome().caveBoost || 0;
             for (let x = -WORLD_SIZE / 2 + 2; x < WORLD_SIZE / 2 - 2; x++) {
                 for (let z = -WORLD_DEPTH / 2 + 2; z < WORLD_DEPTH / 2 - 2; z++) {
                     const surfaceY = surfaceHeights[`${x},${z}`];
@@ -3086,15 +3167,46 @@
                     for (let y = 2; y <= surfaceY - 5; y++) {
                         const tunnel = caveNoise(x, y, z);
                         const pocket = fbm(x * 0.035 - 300, z * 0.035 + y * 0.025);
-                        if (tunnel > 0.64 && pocket > 0.46) {
+                        if (tunnel > 0.64 - caveBoost && pocket > 0.46 - caveBoost * 0.6) {
                             removeBlockData(x, y, z);
-                            if (tunnel > 0.69) {
+                            if (tunnel > 0.69 - caveBoost) {
                                 removeBlockData(x + 1, y, z);
                                 removeBlockData(x, y, z + 1);
+                                if (currentBiomeId === 'lava' && y < WATER_LEVEL - 1 && hash2(x + y, z - y) > 0.88) {
+                                    createBlock(x, y - 1, z, matLava, { solid: false, deferMesh: true, blockKind: 'lava', selectable: false });
+                                }
                             }
                         }
                     }
                 }
+            }
+        }
+
+        function generateLavaFalls() {
+            const halfW = WORLD_SIZE / 2;
+            const halfD = WORLD_DEPTH / 2;
+            for (let x = -halfW + 3; x < halfW - 3; x++) {
+                for (let z = -halfD + 3; z < halfD - 3; z++) {
+                    const surfaceY = surfaceHeights[`${x},${z}`];
+                    if (surfaceY === undefined || surfaceY < WATER_LEVEL + 4) continue;
+                    if (getRiverInfo(x, z).influence > 0.2 || Math.abs(x) < 8 && Math.abs(z) < 8) continue;
+                    if (hash2(x + 77, z - 41) > getCurrentBiome().lavaFallChance) continue;
+
+                    const directions = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+                    for (const [dx, dz] of directions) {
+                        const sideSurface = surfaceHeights[`${x + dx},${z + dz}`];
+                        if (sideSurface === undefined || surfaceY - sideSurface < 4) continue;
+                        createLavaFall(x, surfaceY + 1, z, dx, dz, Math.max(WATER_LEVEL - 2, sideSurface + 1));
+                        break;
+                    }
+                }
+            }
+        }
+
+        function createLavaFall(x, startY, z, dx, dz, endY) {
+            createBlock(x, startY, z, matLava, { solid: false, deferMesh: true, blockKind: 'lava', selectable: false });
+            for (let y = startY - 1; y >= endY; y--) {
+                createBlock(x + dx, y, z + dz, matLava, { solid: false, deferMesh: true, blockKind: 'lava', selectable: false });
             }
         }
 
@@ -3488,7 +3600,7 @@
             return neighbors.some(([dx, dy, dz]) => {
                 const neighbor = worldBlocks[`${x + dx},${y + dy},${z + dz}`];
                 if (!neighbor) return true;
-                if (block.blockKind === 'water') return neighbor.blockKind !== 'water';
+                if (isFluidKind(block.blockKind)) return neighbor.blockKind !== block.blockKind;
                 return neighbor.solid === false;
             });
         }
@@ -3514,7 +3626,7 @@
         }
 
         function createInstancedBlockMesh(type, blocks, meshKey, chunkX, chunkZ) {
-            const geometry = type.id === 'water' ? waterGeom : blockGeom;
+            const geometry = (type.id === 'water' || type.id === 'lava') ? waterGeom : blockGeom;
             const mesh = new THREE.InstancedMesh(geometry, type.material, blocks.length);
             mesh.userData.blockKeys = [];
             mesh.userData.renderType = type.id;
@@ -3522,7 +3634,7 @@
             mesh.userData.chunkZ = chunkZ;
 
             blocks.forEach((block, index) => {
-                const offsetY = type.id === 'water' ? -0.09 : 0;
+                const offsetY = (type.id === 'water' || type.id === 'lava') ? -0.09 : 0;
                 matrixHelper.makeTranslation(block.x, block.y + offsetY, block.z);
                 mesh.setMatrixAt(index, matrixHelper);
                 mesh.userData.blockKeys[index] = `${block.x},${block.y},${block.z}`;
@@ -3530,9 +3642,9 @@
 
             mesh.count = blocks.length;
             mesh.instanceMatrix.needsUpdate = true;
-            if (type.id === 'water' || type.id === 'glass' || type.id === 'ice') mesh.renderOrder = 2;
-            mesh.receiveShadow = type.id !== 'water' && type.id !== 'glass' && type.id !== 'ice';
-            mesh.castShadow = ['wood', 'planks', 'roof', 'cobble', 'brick'].includes(type.id);
+            if (type.id === 'water' || type.id === 'lava' || type.id === 'glass' || type.id === 'ice') mesh.renderOrder = 2;
+            mesh.receiveShadow = type.id !== 'water' && type.id !== 'lava' && type.id !== 'glass' && type.id !== 'ice';
+            mesh.castShadow = ['wood', 'planks', 'roof', 'cobble', 'brick', 'basalt'].includes(type.id);
 
             scene.add(mesh);
             instancedMeshes[meshKey] = mesh;
@@ -4327,24 +4439,25 @@
         }
 
         function spawnHostiles() {
-            if (currentDaylight > 0.38) return;
+            const biome = getCurrentBiome();
+            if (currentDaylight > biome.hostileDaylightLimit) return;
             let attempts = 0;
-            while (hostiles.length < 8 && attempts < 900) {
+            while (hostiles.length < biome.hostileLimit && attempts < 1400) {
                 attempts++;
                 const x = Math.floor(-WORLD_SIZE / 2 + 5 + hash2(attempts, 141) * (WORLD_SIZE - 10));
                 const z = Math.floor(-WORLD_DEPTH / 2 + 5 + hash2(142, attempts) * (WORLD_DEPTH - 10));
                 const surfaceY = surfaceHeights[`${x},${z}`];
                 const block = worldBlocks[`${x},${surfaceY},${z}`];
-                if (!block || block.blockKind === 'water' || getVillageInfo(x, z)) continue;
+                if (!block || isFluidKind(block.blockKind) || getVillageInfo(x, z)) continue;
                 if (Math.abs(x) < 12 && Math.abs(z) < 12) continue;
                 if (!hasEntitySpawnHeadroom(x, z, 3)) continue;
                 const type = hostiles.length % 2 === 0 ? 'mummy' : 'monster';
                 spawnWanderingEntity(hostiles, hostileHitObjects, 'hostile', type, createHostileModel(type), x, z, {
                     radius: 0.38,
                     height: 1.82,
-                    speed: type === 'mummy' ? 0.95 : 1.15,
-                    jump: 3.6,
-                    health: type === 'mummy' ? 12 : 10
+                    speed: (type === 'mummy' ? 0.95 : 1.15) + (currentBiomeId === 'lava' ? 0.2 : 0),
+                    jump: currentBiomeId === 'lava' ? 4.1 : 3.6,
+                    health: (type === 'mummy' ? 12 : 10) + (currentBiomeId === 'lava' ? 4 : 0)
                 });
             }
         }
@@ -4359,7 +4472,7 @@
                     const z = village.z - 6 + Math.floor(hash2(302, attempts + villageIndex * 9) * 13);
                     const surfaceY = surfaceHeights[`${x},${z}`];
                     const block = worldBlocks[`${x},${surfaceY},${z}`];
-                    if (!block || block.blockKind === 'water' || !hasEntitySpawnHeadroom(x, z, 3)) continue;
+                    if (!block || isFluidKind(block.blockKind) || !hasEntitySpawnHeadroom(x, z, 3)) continue;
                     spawnWanderingEntity(villagers, villagerHitObjects, 'villager', 'villager', createVillagerModel(), x, z, {
                         radius: 0.32,
                         height: 1.72,
@@ -4577,7 +4690,8 @@
         }
 
         function updateHostiles(delta) {
-            if (currentDaylight < 0.32 && hostiles.length < 8) spawnHostiles();
+            const biome = getCurrentBiome();
+            if (currentDaylight < biome.hostileDaylightLimit && hostiles.length < biome.hostileLimit) spawnHostiles();
             hostiles.forEach(hostile => updateHostile(hostile, delta));
         }
 
@@ -4892,6 +5006,35 @@
             }
 
             return false;
+        }
+
+        function playerTouchesLava() {
+            const bounds = getPlayerBounds(camera.position.x, camera.position.y, camera.position.z);
+            const minX = Math.floor(bounds.minX + 0.5);
+            const maxX = Math.floor(bounds.maxX + 0.5);
+            const minY = Math.floor(bounds.minY + 0.5);
+            const maxY = Math.floor(bounds.maxY + 0.5);
+            const minZ = Math.floor(bounds.minZ + 0.5);
+            const maxZ = Math.floor(bounds.maxZ + 0.5);
+
+            for (let blockX = minX; blockX <= maxX; blockX++) {
+                for (let blockY = minY; blockY <= maxY; blockY++) {
+                    for (let blockZ = minZ; blockZ <= maxZ; blockZ++) {
+                        const block = getBlockAt(blockX, blockY, blockZ);
+                        if (block && block.blockKind === 'lava' && boundsIntersectBlock(bounds, blockX, blockY, blockZ)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        function updateLavaDamage() {
+            if (!playerTouchesLava()) return;
+            showStatusMessage('Lava queima!');
+            damagePlayer(4);
         }
 
         function getGroundYAt(worldX, worldZ, maxFootY = WORLD_HEIGHT + 10) {
@@ -5252,6 +5395,7 @@
                     velocity.z = 0;
                 }
                 updatePlayerVerticalPhysics(delta);
+                updateLavaDamage();
             }
             updateAnimals(delta);
             updateHorses(delta);
