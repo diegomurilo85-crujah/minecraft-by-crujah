@@ -3145,11 +3145,14 @@
 
             carveCaves();
             if (biome.generateVillages) generateVillages();
-            if (currentBiomeId === 'lava') generateLavaFalls();
+            if (currentBiomeId === 'lava') {
+                generateLavaFalls();
+                generateCaveLavaWaterfall();
+            }
             generateForests();
-            // Repete cleanup até não restar nenhuma água solta (resolve cadeias)
+            // Repete cleanup até não restar nenhum fluido solto (resolve cadeias)
             let _removed;
-            do { _removed = cleanupFloatingWater(); } while (_removed.length > 0);
+            do { _removed = cleanupFloatingFluids(); } while (_removed.length > 0);
             buildVisibleMeshes();
         }
 
@@ -3207,6 +3210,66 @@
             createBlock(x, startY, z, matLava, { solid: false, deferMesh: true, blockKind: 'lava', selectable: false });
             for (let y = startY - 1; y >= endY; y--) {
                 createBlock(x + dx, y, z + dz, matLava, { solid: false, deferMesh: true, blockKind: 'lava', selectable: false });
+            }
+        }
+
+        function generateCaveLavaWaterfall() {
+            const centerX = 14;
+            const centerZ = -16;
+            const floorY = 6;
+            const ceilingY = 16;
+            const radiusX = 6;
+            const radiusZ = 5;
+
+            for (let x = centerX - radiusX; x <= centerX + radiusX; x++) {
+                for (let z = centerZ - radiusZ; z <= centerZ + radiusZ; z++) {
+                    const edge = Math.abs(x - centerX) === radiusX || Math.abs(z - centerZ) === radiusZ;
+                    for (let y = floorY; y <= ceilingY; y++) {
+                        if (y === floorY || y === ceilingY || edge) {
+                            const material = y === floorY ? matBasalt : (hash2(x + y, z - y) > 0.72 ? matAsh : matBasalt);
+                            setBlock(x, y, z, material);
+                        } else {
+                            removeBlockData(x, y, z);
+                        }
+                    }
+                }
+            }
+
+            for (let x = centerX - 1; x <= centerX + 1; x++) {
+                for (let z = centerZ - 1; z <= centerZ + 1; z++) {
+                    setBlock(x, floorY + 1, z, matLava, { solid: false, blockKind: 'lava', selectable: false });
+                }
+            }
+
+            const fallX = centerX - radiusX + 1;
+            const fallZ = centerZ;
+            for (let y = ceilingY - 1; y >= floorY + 2; y--) {
+                setBlock(fallX, y, fallZ, matLava, { solid: false, blockKind: 'lava', selectable: false });
+            }
+
+            carveLavaCaveEntrance(centerX, centerZ + radiusZ, floorY + 3);
+        }
+
+        function carveLavaCaveEntrance(startX, startZ, startY) {
+            const length = 18;
+            for (let step = 0; step <= length; step++) {
+                const z = startZ + step;
+                const y = startY + Math.floor(step / 5);
+                for (let x = startX - 2; x <= startX + 2; x++) {
+                    for (let tunnelY = y - 1; tunnelY <= y + 2; tunnelY++) {
+                        removeBlockData(x, tunnelY, z);
+                    }
+                    setBlock(x, y - 2, z, matBasalt);
+                }
+
+                if (step === length) {
+                    const surfaceY = surfaceHeights[`${startX},${z}`] ?? calculateSurfaceY(startX, z);
+                    for (let x = startX - 2; x <= startX + 2; x++) {
+                        for (let openY = y - 1; openY <= surfaceY + 2; openY++) {
+                            removeBlockData(x, openY, z);
+                        }
+                    }
+                }
             }
         }
 
@@ -3471,7 +3534,7 @@
             delete worldBlocks[key];
         }
 
-        function cleanupFloatingWater(seedPositions = null) {
+        function cleanupFloatingFluid(kind, seedPositions = null) {
             const toRemove = [];
             const candidates = [];
 
@@ -3484,7 +3547,7 @@
                                 const key = getBlockKey(pos.x + dx, pos.y + dy, pos.z + dz);
                                 if (added.has(key)) continue;
                                 const block = worldBlocks[key];
-                                if (!block || block.blockKind !== 'water') continue;
+                                if (!block || block.blockKind !== kind) continue;
                                 added.add(key);
                                 candidates.push(block);
                             }
@@ -3492,20 +3555,20 @@
                     }
                 });
             } else {
-                candidates.push(...Object.values(worldBlocks).filter(block => block.blockKind === 'water'));
+                candidates.push(...Object.values(worldBlocks).filter(block => block.blockKind === kind));
             }
 
             candidates.forEach(block => {
                 const below = worldBlocks[getBlockKey(block.x, block.y - 1, block.z)];
-                const hasSupportBelow = !!below && (below.solid || below.blockKind === 'water');
-                const hasWaterNeighbor = [
+                const hasSupportBelow = !!below && (below.solid || below.blockKind === kind);
+                const hasFluidNeighbor = [
                     [1, 0],
                     [-1, 0],
                     [0, 1],
                     [0, -1]
-                ].some(([dx, dz]) => worldBlocks[getBlockKey(block.x + dx, block.y, block.z + dz)]?.blockKind === 'water');
+                ].some(([dx, dz]) => worldBlocks[getBlockKey(block.x + dx, block.y, block.z + dz)]?.blockKind === kind);
 
-                if (!hasSupportBelow && !hasWaterNeighbor) {
+                if (!hasSupportBelow && !hasFluidNeighbor) {
                     toRemove.push({ x: block.x, y: block.y, z: block.z });
                 }
             });
@@ -3514,19 +3577,35 @@
             return toRemove;
         }
 
-        function spreadWaterFrom(removedPositions) {
+        function cleanupFloatingWater(seedPositions = null) {
+            return cleanupFloatingFluid('water', seedPositions);
+        }
+
+        function cleanupFloatingFluids(seedPositions = null) {
+            return [
+                ...cleanupFloatingFluid('water', seedPositions),
+                ...cleanupFloatingFluid('lava', seedPositions)
+            ];
+        }
+
+        function getFluidMaterial(kind) {
+            return kind === 'lava' ? matLava : matWater;
+        }
+
+        function spreadFluidFrom(kind, removedPositions) {
             const MAX_HORIZONTAL = 7;
             const newBlocks = [];
             const visited = new Set();
             const queue = []; // { x, y, z, hDist }
             const halfW = WORLD_SIZE / 2;
             const halfD = WORLD_DEPTH / 2;
+            const material = getFluidMaterial(kind);
 
             removedPositions.forEach(pos => {
                 [[1,0,0],[-1,0,0],[0,0,1],[0,0,-1],[0,1,0]].forEach(([dx,dy,dz]) => {
                     const nx = pos.x+dx, ny = pos.y+dy, nz = pos.z+dz;
                     const block = getBlockAt(nx, ny, nz);
-                    if (block && block.blockKind === 'water') {
+                    if (block && block.blockKind === kind) {
                         const key = getBlockKey(nx, ny, nz);
                         if (!visited.has(key)) {
                             visited.add(key);
@@ -3545,7 +3624,7 @@
                     const belowKey = getBlockKey(x, by, z);
                     if (!visited.has(belowKey) && !getBlockAt(x, by, z)) {
                         visited.add(belowKey);
-                        createBlock(x, by, z, matWater, { solid: false, blockKind: 'water', deferMesh: true, selectable: false });
+                        createBlock(x, by, z, material, { solid: false, blockKind: kind, deferMesh: true, selectable: false });
                         newBlocks.push({ x, y: by, z });
                         queue.push({ x, y: by, z, hDist: 0 }); // reseta distância horizontal ao descer
                     }
@@ -3559,7 +3638,7 @@
                         const sideKey = getBlockKey(nx, y, nz);
                         if (!visited.has(sideKey) && !getBlockAt(nx, y, nz)) {
                             visited.add(sideKey);
-                            createBlock(nx, y, nz, matWater, { solid: false, blockKind: 'water', deferMesh: true, selectable: false });
+                            createBlock(nx, y, nz, material, { solid: false, blockKind: kind, deferMesh: true, selectable: false });
                             newBlocks.push({ x: nx, y, z: nz });
                             queue.push({ x: nx, y, z: nz, hDist: hDist+1 });
                         }
@@ -3568,6 +3647,17 @@
             }
 
             return newBlocks;
+        }
+
+        function spreadWaterFrom(removedPositions) {
+            return spreadFluidFrom('water', removedPositions);
+        }
+
+        function spreadFluidsFrom(removedPositions) {
+            return [
+                ...spreadFluidFrom('water', removedPositions),
+                ...spreadFluidFrom('lava', removedPositions)
+            ];
         }
 
         function rebuildChunksForPositions(positions) {
@@ -3729,9 +3819,9 @@
             const block = worldBlocks[`${x},${y},${z}`];
             if (block && block.renderType === 'lamp') removeLampLight(x, y, z);
             removeBlockData(x, y, z);
-            const waterRemoved = cleanupFloatingWater([{ x, y, z }]);
-            const waterAdded = spreadWaterFrom([{ x, y, z }]);
-            rebuildChunksForPositions([{ x, y, z }, ...waterRemoved, ...waterAdded]);
+            const fluidRemoved = cleanupFloatingFluids([{ x, y, z }]);
+            const fluidAdded = spreadFluidsFrom([{ x, y, z }]);
+            rebuildChunksForPositions([{ x, y, z }, ...fluidRemoved, ...fluidAdded]);
         }
 
         function getBlockKey(x, y, z) {
@@ -3758,9 +3848,9 @@
             });
 
             if (changed) {
-                const waterRemoved = cleanupFloatingWater(changedPositions);
-                const waterAdded = spreadWaterFrom(changedPositions);
-                rebuildChunksForPositions([...changedPositions, ...waterRemoved, ...waterAdded]);
+                const fluidRemoved = cleanupFloatingFluids(changedPositions);
+                const fluidAdded = spreadFluidsFrom(changedPositions);
+                rebuildChunksForPositions([...changedPositions, ...fluidRemoved, ...fluidAdded]);
             }
         }
 
